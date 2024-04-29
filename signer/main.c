@@ -59,26 +59,6 @@ enum state {
 	STATE_FAILED,
 };
 
-static uint32_t entropy_get()
-{
-	while ((*trng_status & (1 << TK1_MMIO_TRNG_STATUS_READY_BIT)) == 0) {
-	}
-	return *trng_entropy;
-}
-
-static int myrand(void *rng_state, unsigned char *output, size_t len)
-{
-    size_t i;
-
-    if (rng_state != NULL) {
-        rng_state  = NULL;
-    }
-
-    for (i = 0; i < len; ++i) {
-        output[i] = (unsigned char)entropy_get();
-    }
-    return 0;
-}
 // Context for the loading of a message
 struct context {
 	mbedtls_rsa_context rsa;
@@ -160,30 +140,6 @@ exit:
     mbedtls_entropy_free(&entropy);
 
 	return ret; // TODO: Exit code
-}
-
-void swap(unsigned char* a, unsigned char* b)
-{
-	unsigned char tmp = *a;
-	*a = *b;
-	*b = tmp;
-}
-
-void toBigEndian(unsigned char* src, int len)
-{
-	for(int i = 0; i < len; i += 4)
-	{
-		swap(&src[i + 0], &src[i + 3]);
-		swap(&src[i + 1], &src[i + 2]);
-	}
-}
-
-void reverse(unsigned char* data, size_t len, unsigned char* output)
-{
-	for(int i = 0; i < len; ++i)
-	{
-		output[i] = data[len-1-i];
-	}
 }
 
 void send_data(struct packet* pkt, const uint8_t* buf, size_t total_size, int rsp_type)
@@ -414,9 +370,6 @@ static enum state loading_commands(enum state state, struct context *ctx,
 		appreply(pkt.hdr, RSP_LOAD_DATA, rsp);
 
 		if (ctx->left == 0) {
-			qemu_puts("message ");
-			qemu_hexdump(ctx->message, ctx->message_size);
-			qemu_lf();
 			state = STATE_SIGNING;
 			break;
 		}
@@ -478,9 +431,6 @@ static enum state signing_commands(enum state state, struct context *ctx,
 		qemu_puts("Touched, now let's sign\n");
 
 		// All loaded, device touched, let's sign the message
-		// crypto_ed25519_sign(signature, ctx->secret_key, ctx->message,
-		// 		    ctx->message_size);
-		// Sign message with RSA
 		int ret = 0;
 		mbedtls_md_context_t md_ctx;
 		mbedtls_md_init(&md_ctx);
@@ -555,10 +505,6 @@ static enum state signing_commands(enum state state, struct context *ctx,
 			state = STATE_FAILED;
 			break;
 		}
-
-		qemu_puts("To big endian!\n");
-		qemu_puts("Before\n");
-		qemu_hexdump(signature, KEY_SIZE_BYTES);
 
 		qemu_puts("Sending signature!\n");
 		send_data(&pkt, signature, KEY_SIZE_BYTES, RSP_GET_SIG);
@@ -644,27 +590,6 @@ int main(void)
 	*cpu_mon_ctrl = 1;
 
 	led_set(LED_BLUE);
-
-	// Generate a public key from CDI
-	//crypto_ed25519_key_pair(ctx.secret_key, ctx.pubkey, (uint8_t *)cdi);
-//	int ret = 0;
-	// TODO: Use cdi
-	// if((ret = generate_rsa_key_pair(&ctx.rsa)) != 0)
-	// {
-	// 	qemu_puts("failed to generate key pair: ");
-	// 	qemu_putinthex(ret);
-	// 	qemu_lf();
-	// 	state = STATE_FAILED;
-	// }
-
-	// uint8_t Nbuf[256] = {0};
-	// if((ret = mbedtls_mpi_write_binary_le(&ctx.rsa.private_N, Nbuf, 256)) != 0){
-	// 	mbedtls_printf("\n Failed to write to binary: %d\n", ret);
-	// 	state = STATE_FAILED;
-	// }
-	// qemu_puts("pubkey: ");
-	// qemu_hexdump(Nbuf, ctx.rsa.private_len);
-	// qemu_lf();
 
 	for (;;) {
 		qemu_puts("parser state: ");
