@@ -35,9 +35,6 @@ static volatile uint32_t *cpu_mon_last  = (volatile uint32_t *) TK1_MMIO_TK1_CPU
 static volatile uint32_t *app_addr      = (volatile uint32_t *) TK1_MMIO_TK1_APP_ADDR;
 static volatile uint32_t *app_size      = (volatile uint32_t *) TK1_MMIO_TK1_APP_SIZE;
 
-static volatile uint32_t *trng_status      = (volatile uint32_t *) TK1_MMIO_TRNG_STATUS;
-static volatile uint32_t *trng_entropy      = (volatile uint32_t *) TK1_MMIO_TRNG_ENTROPY;
- 
 // clang-format on
 
 // Touch timeout in seconds
@@ -45,7 +42,7 @@ static volatile uint32_t *trng_entropy      = (volatile uint32_t *) TK1_MMIO_TRN
 #define MAX_SIGN_SIZE 4096
 
 #define KEY_SIZE 2048
-#define KEY_SIZE_BYTES KEY_SIZE/8
+#define KEY_SIZE_BYTES 256 // KEY_SIZE/8
 #define EXPONENT 65537
 
 const uint8_t app_name0[4] = "tk1 ";
@@ -114,16 +111,16 @@ int generate_rsa_key_pair(mbedtls_rsa_context* rsa)
     }
 
     if ((ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy,
-                                     //(const unsigned char *) pers,
 									 (uint8_t *)cdi,
 									 32)) != 0)
 	{
-                                     //strlen(pers))) != 0) {
 		qemu_puts("failed mbedtls_ctr_drbg_seed: ");
 		qemu_putinthex(ret);
 		qemu_lf();
         goto exit;
     }
+
+	led_set(LED_WHITE);
 
 	if ((ret = mbedtls_rsa_gen_key(rsa, mbedtls_ctr_drbg_random, &ctr_drbg, KEY_SIZE,
                                    EXPONENT)) != 0) {
@@ -132,6 +129,7 @@ int generate_rsa_key_pair(mbedtls_rsa_context* rsa)
 		qemu_lf();
         goto exit;
     }
+	led_set(LED_BLUE);
 
 
 
@@ -255,6 +253,7 @@ static enum state started_commands(enum state state, struct context *ctx,
 				qemu_putinthex(ret);
 				qemu_lf();
 				state = STATE_FAILED;
+				break;
 			}
 			ctx->initialized = 1;
 		}
@@ -417,16 +416,16 @@ static enum state signing_commands(enum state state, struct context *ctx,
 			break;
 		}
 
-// #ifndef TKEY_SIGNER_APP_NO_TOUCH
-// 		touched = touch_wait(LED_GREEN, TOUCH_TIMEOUT);
-// #endif
-// 		if (!touched) {
-// 			rsp[0] = STATUS_BAD;
-// 			appreply(pkt.hdr, RSP_GET_SIG, rsp);
+#ifndef TKEY_SIGNER_APP_NO_TOUCH
+		touched = touch_wait(LED_GREEN, TOUCH_TIMEOUT);
+#endif
+		if (!touched) {
+			rsp[0] = STATUS_BAD;
+			appreply(pkt.hdr, RSP_GET_SIG, rsp);
 
-// 			state = STATE_STARTED;
-// 			break;
-// 		}
+			state = STATE_STARTED;
+			break;
+		}
 
 		qemu_puts("Touched, now let's sign\n");
 
