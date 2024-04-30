@@ -22,7 +22,6 @@ In the folder mbedtls do:
 * Do make clean && make
 * copy the singer/app.bin to the rsa-tkey-ssh-agent
 
-
 ## Design choices
 * Key length is set to 2048 bits and is not configurable (for now at least)
 * SHA512 is used and is not configurable
