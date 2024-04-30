@@ -29,3 +29,7 @@ In the folder mbedtls do:
 ## Improvements
 * Update the protocol to send the data sizes before sending the data
 * Make hash algorithm and key sizes configurable.
+
+## LICENSE
+This project is based on Mbed-TLS (https://github.com/Mbed-TLS/mbedtls) and https://github.com/tillitis/tkey-device-signer. 
+This repo is licensed to "GNU General Public License v2.0 only".
