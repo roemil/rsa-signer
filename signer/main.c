@@ -653,40 +653,6 @@ int main(void)
 	*cpu_mon_ctrl = 1;
 
 	int ret = 0;
-	// mbedtls_pk_init(&ctx.pk);
-
-	// ret = generate_seed(&ctx);
-	// if (ret != 0) {
-	// 	qemu_puts("generate_seed failed ");
-	// 	qemu_putinthex(ret);
-	// 	qemu_lf();
-	// 	assert(1 == 2);
-	// }
-
-	// ret = mbedtls_pk_parse_key(&ctx.pk, key, 1676, NULL, 0, mbedtls_ctr_drbg_random, &ctx.ctr_drbg);
-	//  if (ret != 0) {
-	// 	qemu_puts("mbedtls_pk_parse_key ");
-	// 	qemu_putinthex(ret);
-	// 	qemu_lf();
-	// 	assert(1 == 2);
-	//  }
-
-	// mbedtls_rsa_context *const rsa_ctx = mbedtls_pk_rsa(ctx.pk);
-    // if ((ret = mbedtls_rsa_check_pubkey(rsa_ctx)) != 0) {
-    //     state = STATE_FAILED;
-	// 	qemu_puts("mbedtls_rsa_check_pubkey ");
-	// 	qemu_putinthex(ret);
-	// 	qemu_lf();
-	// 	assert(1 == 2);
-    // }
-
-    // if ((ret = mbedtls_rsa_check_privkey(rsa_ctx)) != 0) {
-    //     state = STATE_FAILED;
-	// 	qemu_puts("mbedtls_rsa_check_privkey ");
-	// 	qemu_putinthex(ret);
-	// 	qemu_lf();
-	// 	assert(1 == 2);
-    // }
 
 	led_set(LED_BLUE);
 
