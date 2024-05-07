@@ -11,6 +11,7 @@
 #include "mbedtls/rsa.h"
 #include "mbedtls/md.h"
 #include "mbedtls/platform.h"
+#include "mbedtls/pk.h"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -22,8 +23,6 @@
 #include <tkey/qemu_debug.h>
 #include <tkey/tk1_mem.h>
 #include <tkey/touch.h>
-
-
 
 #include "app_proto.h"
 
@@ -59,12 +58,16 @@ enum state {
 // Context for the loading of a message
 struct context {
 	mbedtls_rsa_context rsa;
+	mbedtls_pk_context pk;
 	uint8_t message[MAX_SIGN_SIZE];
 	uint32_t left; // Bytes left to receive
 	uint32_t message_size;
 	uint16_t msg_idx; // Where we are currently loading a message
-	uint32_t rsa_key_sent;
 	uint8_t initialized;
+	mbedtls_entropy_context entropy;
+	mbedtls_ctr_drbg_context ctr_drbg;
+
+	unsigned char key[1676];
 };
 
 // Incoming packet from client
@@ -88,7 +91,6 @@ static void wipe_context(struct context *ctx)
 	ctx->left = 0;
 	ctx->message_size = 0;
 	ctx->msg_idx = 0;
-	ctx->rsa_key_sent = 0;
 }
 
 int generate_rsa_key_pair(mbedtls_rsa_context* rsa)
@@ -155,6 +157,62 @@ void send_data(struct packet* pkt, const uint8_t* buf, size_t total_size, int rs
 		left -= nbytes;
 		appreply(pkt->hdr, rsp_type, rsp);
 	}
+}
+
+int generate_seed(struct context * ctx)
+{
+	mbedtls_ctr_drbg_init(&ctx->ctr_drbg);
+	mbedtls_entropy_init(&ctx->entropy);
+	int ret = 0;
+	if ((ret = mbedtls_ctr_drbg_seed(&ctx->ctr_drbg, mbedtls_entropy_func, &ctx->entropy,
+									(uint8_t *)cdi,
+									32)) != 0)
+	{
+		qemu_puts("failed mbedtls_ctr_drbg_seed: ");
+		qemu_putinthex(ret);
+		qemu_lf();
+		mbedtls_ctr_drbg_free(&ctx->ctr_drbg);
+		mbedtls_entropy_free(&ctx->entropy);
+	}
+	return ret;
+}
+
+int load_key(struct context * ctx)
+{
+	mbedtls_pk_init(&ctx->pk);
+	int ret = 0;
+	int state = STATE_STARTED;
+	ret = generate_seed(ctx);
+	if (ret != 0) {
+		qemu_puts("generate_seed failed ");
+		qemu_putinthex(ret);
+		qemu_lf();
+		state = STATE_FAILED;
+	}
+
+	ret = mbedtls_pk_parse_key(&ctx->pk, ctx->key, 1676, NULL, 0, mbedtls_ctr_drbg_random, &ctx->ctr_drbg);
+	 if (ret != 0) {
+		qemu_puts("mbedtls_pk_parse_key ");
+		qemu_putinthex(ret);
+		qemu_lf();
+	 }
+
+	mbedtls_rsa_context *const rsa_ctx = mbedtls_pk_rsa(ctx->pk);
+    if ((ret = mbedtls_rsa_check_pubkey(rsa_ctx)) != 0) {
+        state = STATE_FAILED;
+		qemu_puts("mbedtls_rsa_check_pubkey ");
+		qemu_putinthex(ret);
+		qemu_lf();
+    }
+
+    if ((ret = mbedtls_rsa_check_privkey(rsa_ctx)) != 0) {
+        state = STATE_FAILED;
+		qemu_puts("mbedtls_rsa_check_privkey ");
+		qemu_putinthex(ret);
+		qemu_lf();
+    }
+
+	return state;
 }
 
 // started_commands() allows only these commands:
@@ -245,30 +303,22 @@ static enum state started_commands(enum state state, struct context *ctx,
 		}
 
 		int ret =0;
-		if(ctx->initialized != 1)
-		{
-			if((ret = generate_rsa_key_pair(&ctx->rsa)) != 0)
-			{
-				qemu_puts("failed to generate key pair: ");
-				qemu_putinthex(ret);
-				qemu_lf();
-				state = STATE_FAILED;
-				break;
-			}
-			ctx->initialized = 1;
-		}
 
 		uint8_t Nbuf[KEY_SIZE_BYTES] = {0};
-		if((ret = mbedtls_mpi_write_binary(&ctx->rsa.private_N, Nbuf, KEY_SIZE_BYTES)) != 0){
+		mbedtls_rsa_context *const rsa_ctx = mbedtls_pk_rsa(ctx->pk);
+		if (rsa_ctx == NULL) {
+			qemu_puts("failed rsa_ctx: ");
+			break;
+		}
+		if((ret = mbedtls_mpi_write_binary(&rsa_ctx->private_N, Nbuf, KEY_SIZE_BYTES)) != 0){
 			qemu_puts("failed mbedtls_mpi_write_binary_le: ");
 			qemu_putinthex(ret);
-			qemu_lf();;
-			state = STATE_FAILED;
+			qemu_lf();
 			break;
 		}
 
 		qemu_puts("pubkey: ");
-		qemu_hexdump(Nbuf, ctx->rsa.private_len);
+		qemu_hexdump(Nbuf, rsa_ctx->private_len);
 		qemu_lf();
 		send_data(&pkt, Nbuf, KEY_SIZE_BYTES, RSP_GET_PUBKEY);
 		// state unchanged
@@ -309,7 +359,6 @@ static enum state started_commands(enum state state, struct context *ctx,
 
 		rsp[0] = STATUS_OK;
 		appreply(pkt.hdr, RSP_SET_SIZE, rsp);
-
 		state = STATE_LOADING;
 		break;
 	}
@@ -376,6 +425,46 @@ static enum state loading_commands(enum state state, struct context *ctx,
 		// state unchanged
 		break;
 	}
+	case CMD_LOAD_KEY: {
+		int nbytes = 0;			    // Bytes to write to memory
+		qemu_puts("CMD_LOAD_KEY\n");
+
+		// Bad length
+		if (pkt.hdr.len != CMDLEN_MAXBYTES) {
+			rsp[0] = STATUS_BAD;
+			appreply(pkt.hdr, RSP_LOAD_DATA, rsp);
+
+			state = STATE_FAILED;
+			break;
+		}
+
+		if (ctx->left > CMDLEN_MAXBYTES - 1) {
+			nbytes = CMDLEN_MAXBYTES - 1;
+		} else {
+			nbytes = ctx->left;
+		}
+
+		memcpy_s(&ctx->key[ctx->msg_idx],
+			 1676 - ctx->msg_idx, pkt.cmd + 1, nbytes);
+
+		ctx->msg_idx += nbytes;
+		ctx->left -= nbytes;
+
+		rsp[0] = STATUS_OK;
+		appreply(pkt.hdr, RSP_LOAD_DATA, rsp);
+
+		if (ctx->left == 0) {
+			load_key(ctx);
+			qemu_puts("CMD_LOAD_KEY is done\n");
+			ctx->msg_idx = 0;
+			ctx->message_size = 0;
+			state = STATE_STARTED;
+			break;
+		}
+
+		// state unchanged
+		break;
+	}
 
 	default:
 		qemu_puts("Got unknown loading command: 0x");
@@ -404,7 +493,7 @@ static enum state signing_commands(enum state state, struct context *ctx,
 {
 	uint8_t rsp[CMDLEN_MAXBYTES] = {0}; // Response
 	uint8_t signature[KEY_SIZE_BYTES] = {0};
-	bool touched;
+	bool touched = true;
 
 	switch (pkt.cmd[0]) {
 	case CMD_GET_SIG:
@@ -412,6 +501,8 @@ static enum state signing_commands(enum state state, struct context *ctx,
 		if (pkt.hdr.len != 1) {
 			// Bad length
 			qemu_puts("Bad length\n");
+			qemu_putinthex(pkt.hdr.len);
+			qemu_lf();
 			state = STATE_FAILED;
 			break;
 		}
@@ -466,53 +557,27 @@ static enum state signing_commands(enum state state, struct context *ctx,
 		qemu_puts("message_size: ");
 		qemu_putinthex(ctx->message_size);
 		qemu_lf();
-		mbedtls_entropy_context entropy;
-   		mbedtls_ctr_drbg_context ctr_drbg;
-		mbedtls_ctr_drbg_init(&ctr_drbg);
-		mbedtls_entropy_init(&entropy);
-		if ((ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy,
-                                     (uint8_t *)cdi,
-									 32)) != 0)
-		{
-			qemu_puts("failed mbedtls_ctr_drbg_seed: ");
+
+		size_t olen = 0;
+		if ((ret = mbedtls_pk_sign(&ctx->pk, MBEDTLS_MD_SHA512, hash, 64,
+								signature, sizeof(signature), &olen,
+								mbedtls_ctr_drbg_random, &ctx->ctr_drbg)) != 0) {
+			qemu_puts("failed mbedtls_pk_sign: ");
 			qemu_putinthex(ret);
 			qemu_lf();
-			mbedtls_ctr_drbg_free(&ctr_drbg);
-    		mbedtls_entropy_free(&entropy);
 			state = STATE_FAILED;
 			break;
 		}
 
-		if ((ret = mbedtls_rsa_rsassa_pkcs1_v15_sign(&(ctx->rsa), mbedtls_ctr_drbg_random, &ctr_drbg, MBEDTLS_MD_SHA512,
-                                   	      64, hash, signature)) != 0) {
-			qemu_puts("mbedtls_rsa_pkcs1_sign returned -0x");
-			qemu_puthex(ret);
-			qemu_lf();
-			mbedtls_ctr_drbg_free(&ctr_drbg);
-    		mbedtls_entropy_free(&entropy);
-			state = STATE_FAILED;
-			break;
-    	}
-
-		if ( (ret = mbedtls_rsa_rsassa_pkcs1_v15_verify(&(ctx->rsa), MBEDTLS_MD_SHA512, 64, hash, signature) ) != 0)
-		{
-			qemu_puts("mbedtls_rsa_rsassa_pkcs1_v15_verify returned -0x");
-			qemu_puthex(ret);
-			qemu_lf();
-			mbedtls_ctr_drbg_free(&ctr_drbg);
-    		mbedtls_entropy_free(&entropy);
-			state = STATE_FAILED;
-			break;
-		}
+		assert(olen == 256);
 
 		qemu_puts("Sending signature!\n");
 		send_data(&pkt, signature, KEY_SIZE_BYTES, RSP_GET_SIG);
 		// Forget signature and most of context
 		crypto_wipe(signature, sizeof(signature));
+		crypto_wipe(hash, sizeof(hash));
 		wipe_context(ctx);
 		state = STATE_STARTED;
-		mbedtls_ctr_drbg_free(&ctr_drbg);
-		mbedtls_entropy_free(&entropy);
 
 		break;
 
@@ -538,7 +603,6 @@ static int read_command(struct frame_header *hdr, uint8_t *cmd)
 	memset(cmd, 0, CMDLEN_MAXBYTES);
 
 	in = readbyte();
-
 	if (parseframe(in, hdr) == -1) {
 		qemu_puts("Couldn't parse header\n");
 		return -1;
@@ -577,7 +641,7 @@ int main(void)
 	#ifndef MBEDTLS_MEMORY_BUFFER_ALLOC_C
 	assert(1==2);
 	#endif
-	unsigned char memory_buf[50000];
+	unsigned char memory_buf[20000];
 	mbedtls_memory_buffer_alloc_init( memory_buf, sizeof(memory_buf) );
 	struct context ctx = {0};
 	enum state state = STATE_STARTED;
@@ -587,6 +651,42 @@ int main(void)
 	*cpu_mon_first = *app_addr + *app_size;
 	*cpu_mon_last = TK1_RAM_BASE + TK1_RAM_SIZE;
 	*cpu_mon_ctrl = 1;
+
+	int ret = 0;
+	// mbedtls_pk_init(&ctx.pk);
+
+	// ret = generate_seed(&ctx);
+	// if (ret != 0) {
+	// 	qemu_puts("generate_seed failed ");
+	// 	qemu_putinthex(ret);
+	// 	qemu_lf();
+	// 	assert(1 == 2);
+	// }
+
+	// ret = mbedtls_pk_parse_key(&ctx.pk, key, 1676, NULL, 0, mbedtls_ctr_drbg_random, &ctx.ctr_drbg);
+	//  if (ret != 0) {
+	// 	qemu_puts("mbedtls_pk_parse_key ");
+	// 	qemu_putinthex(ret);
+	// 	qemu_lf();
+	// 	assert(1 == 2);
+	//  }
+
+	// mbedtls_rsa_context *const rsa_ctx = mbedtls_pk_rsa(ctx.pk);
+    // if ((ret = mbedtls_rsa_check_pubkey(rsa_ctx)) != 0) {
+    //     state = STATE_FAILED;
+	// 	qemu_puts("mbedtls_rsa_check_pubkey ");
+	// 	qemu_putinthex(ret);
+	// 	qemu_lf();
+	// 	assert(1 == 2);
+    // }
+
+    // if ((ret = mbedtls_rsa_check_privkey(rsa_ctx)) != 0) {
+    //     state = STATE_FAILED;
+	// 	qemu_puts("mbedtls_rsa_check_privkey ");
+	// 	qemu_putinthex(ret);
+	// 	qemu_lf();
+	// 	assert(1 == 2);
+    // }
 
 	led_set(LED_BLUE);
 
@@ -623,7 +723,7 @@ int main(void)
 			break; // Not reached
 		}
 	}
-		#if defined(MBEDTLS_MEMORY_BUFFER_ALLOC_C)
+	#if defined(MBEDTLS_MEMORY_BUFFER_ALLOC_C)
 	#if defined(MBEDTLS_MEMORY_DEBUG)
 		mbedtls_memory_buffer_alloc_status();
 	#endif

@@ -713,7 +713,7 @@
  *
  * Uncomment this macro to enable the NULL cipher and ciphersuites
  */
-#define MBEDTLS_CIPHER_NULL_CIPHER
+//#define MBEDTLS_CIPHER_NULL_CIPHER
 
 /**
  * \def MBEDTLS_CIPHER_PADDING_PKCS7
@@ -2393,7 +2393,7 @@
  *
  * This module is required for PEM support (required by X.509).
  */
-//#define MBEDTLS_BASE64_C
+#define MBEDTLS_BASE64_C
 
 /**
  * \def MBEDTLS_BLOCK_CIPHER_NO_DECRYPT
@@ -3047,7 +3047,7 @@
  *
  * This modules adds support for decoding / parsing PEM files.
  */
-//#define MBEDTLS_PEM_PARSE_C
+#define MBEDTLS_PEM_PARSE_C
 
 /**
  * \def MBEDTLS_PEM_WRITE_C
@@ -3096,7 +3096,7 @@
  *
  * Uncomment to enable generic public key parse functions.
  */
-//#define MBEDTLS_PK_PARSE_C
+#define MBEDTLS_PK_PARSE_C
 
 /**
  * \def MBEDTLS_PK_WRITE_C

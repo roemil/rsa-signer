@@ -21,7 +21,7 @@ CFLAGS = -target riscv32-unknown-none-elf -march=rv32iczmmul -mabi=ilp32 -mcmode
    -static -std=gnu99 -O2 -ffast-math -fno-common -fno-builtin-printf \
    -fno-builtin-putchar -nostdlib -mno-relax -flto -g \
    -Wall -Werror=implicit-function-declaration \
-   -I $(INCLUDE) -I $(LIBDIR) -I mbedtls/include -I/opt/riscv/riscv32-unknown-elf/include# -DQEMU_DEBUG -DTKEY_SIGNER_APP_NO_TOUCH=yes
+   -I $(INCLUDE) -I $(LIBDIR) -I../tkey-libs -I mbedtls/include -I/opt/riscv/riscv32-unknown-elf/include #-DQEMU_DEBUG -DTKEY_SIGNER_APP_NO_TOUCH=yes
 
 ifneq ($(TKEY_SIGNER_APP_NO_TOUCH),)
 CFLAGS := $(CFLAGS) -DTKEY_SIGNER_APP_NO_TOUCH
@@ -30,7 +30,7 @@ endif
 AS = clang
 ASFLAGS = -target riscv32-unknown-none-elf -march=rv32iczmmul -mabi=ilp32 -mcmodel=medany -mno-relax
 
-LDFLAGS=-T $(LIBDIR)/app.lds -L $(LIBDIR) -lcommon -lcrt0 -L mbedtls/library -L /opt/riscv/lib/gcc/riscv32-unknown-elf/13.2.0/ -lgcc
+LDFLAGS=-T $(LIBDIR)/app.lds -L $(LIBDIR) -lcommon -lcrt0 -L mbedtls/library -L /opt/riscv/lib/gcc/riscv32-unknown-elf/13.2.0/ -lgcc -L  /opt/riscv/riscv32-unknown-elf/lib/ -lc
 
 
 .PHONY: all

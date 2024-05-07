@@ -22,6 +22,8 @@ enum appcmd {
 	CMD_GET_FIRMWARE_HASH = 0x0b,
 	RSP_GET_FIRMWARE_HASH = 0x0c,
 
+	CMD_LOAD_KEY = 0x0d,
+
 	CMD_FW_PROBE	    = 0xff,
 };
 // clang-format on
