@@ -21,7 +21,7 @@ CFLAGS = -target riscv32-unknown-none-elf -march=rv32iczmmul -mabi=ilp32 -mcmode
    -static -std=gnu99 -O2 -ffast-math -fno-common -fno-builtin-printf \
    -fno-builtin-putchar -nostdlib -mno-relax -flto -g \
    -Wall -Werror=implicit-function-declaration \
-   -I $(INCLUDE) -I $(LIBDIR) -I../tkey-libs -I mbedtls/include -I/opt/riscv/riscv32-unknown-elf/include #-DTKEY_SIGNER_APP_NO_TOUCH=yes #$-DQEMU_DEBUG 
+   -I $(INCLUDE) -I $(LIBDIR) -I../tkey-libs -I mbedtls/include -I/opt/riscv/riscv32-unknown-elf/include #-DTKEY_SIGNER_APP_NO_TOUCH=yes -DQEMU_DEBUG 
 
 ifneq ($(TKEY_SIGNER_APP_NO_TOUCH),)
 CFLAGS := $(CFLAGS) -DTKEY_SIGNER_APP_NO_TOUCH

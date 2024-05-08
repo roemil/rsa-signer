@@ -29,6 +29,11 @@ enum appcmd {
 	CMD_IS_KEY_LOADED = 0x11,
 	RSP_IS_KEY_LOADED = 0x12,
 
+	CMD_DECRYPT_KEY = 0x13,
+	RSP_DECRYPT_KEY = 0x14,
+	CMD_PARSE_KEY = 0x15,
+	RSP_PARSE_KEY = 0x16,
+
 	CMD_FW_PROBE	    = 0xff,
 };
 // clang-format on

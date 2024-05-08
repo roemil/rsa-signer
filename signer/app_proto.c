@@ -56,6 +56,14 @@ void appreply(struct frame_header hdr, enum appcmd rspcode, void *buf)
 		len = LEN_4;
 		nbytes = 4;
 		break; 
+	case RSP_DECRYPT_KEY:
+		len = LEN_4;
+		nbytes = 4;
+		break;
+	case RSP_PARSE_KEY:
+		len = LEN_4;
+		nbytes = 4;
+		break; 
 
 
 	default:
