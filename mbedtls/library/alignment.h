@@ -12,9 +12,8 @@
 #define MBEDTLS_LIBRARY_ALIGNMENT_H
 
 #include <stdint.h>
-//#include <string.h>
-#include <tkey/lib.h>
-//#include <stdlib.h>
+#include <string.h>
+#include <stdlib.h>
 
 /*
  * Define MBEDTLS_EFFICIENT_UNALIGNED_ACCESS for architectures where unaligned memory

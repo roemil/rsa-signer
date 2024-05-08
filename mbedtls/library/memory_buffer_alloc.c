@@ -15,8 +15,7 @@
 #include "mbedtls/platform.h"
 #include "mbedtls/platform_util.h"
 
-//#include <string.h>
-#include <tkey/lib.h>
+#include <string.h>
 
 #if defined(MBEDTLS_MEMORY_BACKTRACE)
 #include <execinfo.h>

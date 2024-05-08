@@ -3,19 +3,16 @@
 
 #include <monocypher/monocypher-ed25519.h>
 
-#include <mbedtls/rsa.h>
 #include <mbedtls/memory_buffer_alloc.h>
 #include "mbedtls/entropy.h"
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/bignum.h"
 #include "mbedtls/rsa.h"
 #include "mbedtls/md.h"
-#include "mbedtls/platform.h"
 #include "mbedtls/pk.h"
 
 #include <stdlib.h>
 #include <stdint.h>
-#include <string.h>
 #include <stdbool.h>
 #include <tkey/assert.h>
 #include <tkey/led.h>
@@ -43,6 +40,7 @@ static volatile uint32_t *app_size      = (volatile uint32_t *) TK1_MMIO_TK1_APP
 #define KEY_SIZE 2048
 #define KEY_SIZE_BYTES 256 // KEY_SIZE/8
 #define EXPONENT 65537
+#define RSA_PEM_FILE_SIZE 1676
 
 const uint8_t app_name0[4] = "tk1 ";
 const uint8_t app_name1[4] = "sign";
@@ -53,21 +51,23 @@ enum state {
 	STATE_LOADING,
 	STATE_SIGNING,
 	STATE_FAILED,
+	STATE_RSA_KEY_ENCRYPTING
 };
 
 // Context for the loading of a message
 struct context {
-	mbedtls_rsa_context rsa;
-	mbedtls_pk_context pk;
+	uint8_t secret_key[64]; // Private key. Used to encrypt RSA PEM FILE
+	uint8_t pubkey[32];
 	uint8_t message[MAX_SIGN_SIZE];
 	uint32_t left; // Bytes left to receive
 	uint32_t message_size;
 	uint16_t msg_idx; // Where we are currently loading a message
 	uint8_t initialized;
+	unsigned char key[RSA_PEM_FILE_SIZE]; // RSA key
+	mbedtls_pk_context pk;
 	mbedtls_entropy_context entropy;
 	mbedtls_ctr_drbg_context ctr_drbg;
 
-	unsigned char key[1676];
 };
 
 // Incoming packet from client
@@ -151,8 +151,6 @@ void send_data(struct packet* pkt, const uint8_t* buf, size_t total_size, int rs
 		uint8_t rsp[CMDLEN_MAXBYTES] = {0}; // Response
 		int nbytes = left > CMDLEN_MAXBYTES-1 ? CMDLEN_MAXBYTES-1 : left;
 		memcpy_s(rsp, CMDLEN_MAXBYTES, buf+sent, nbytes);
-		qemu_puts("sending\n");
-		qemu_hexdump(buf+sent, nbytes);
 		sent += nbytes;
 		left -= nbytes;
 		appreply(pkt->hdr, rsp_type, rsp);
@@ -177,12 +175,26 @@ int generate_seed(struct context * ctx)
 	return ret;
 }
 
-int load_key(struct context * ctx)
+int load_key(struct context * ctx, uint8_t decrypt)
 {
-	mbedtls_pk_init(&ctx->pk);
-	int ret = 0;
 	int state = STATE_STARTED;
-	ret = generate_seed(ctx);
+	if (ctx->initialized == 1) {
+		return state;
+	}
+	if (decrypt) {
+		qemu_puts("decrypting\n");
+		uint8_t  nonce[24] = {0};
+		crypto_chacha20_x(ctx->key,
+                          ctx->key,
+                          RSA_PEM_FILE_SIZE,
+                          ctx->secret_key,
+                          nonce,
+                          0);
+	}
+	qemu_hexdump(ctx->key, RSA_PEM_FILE_SIZE);
+	ctx->initialized = 1;
+	mbedtls_pk_init(&ctx->pk);
+	int ret = generate_seed(ctx);
 	if (ret != 0) {
 		qemu_puts("generate_seed failed ");
 		qemu_putinthex(ret);
@@ -190,26 +202,27 @@ int load_key(struct context * ctx)
 		state = STATE_FAILED;
 	}
 
-	ret = mbedtls_pk_parse_key(&ctx->pk, ctx->key, 1676, NULL, 0, mbedtls_ctr_drbg_random, &ctx->ctr_drbg);
+	ret = mbedtls_pk_parse_key(&ctx->pk, ctx->key, RSA_PEM_FILE_SIZE, NULL, 0, mbedtls_ctr_drbg_random, &ctx->ctr_drbg);
 	 if (ret != 0) {
 		qemu_puts("mbedtls_pk_parse_key ");
 		qemu_putinthex(ret);
 		qemu_lf();
+		state = STATE_FAILED;
 	 }
 
 	mbedtls_rsa_context *const rsa_ctx = mbedtls_pk_rsa(ctx->pk);
     if ((ret = mbedtls_rsa_check_pubkey(rsa_ctx)) != 0) {
-        state = STATE_FAILED;
 		qemu_puts("mbedtls_rsa_check_pubkey ");
 		qemu_putinthex(ret);
 		qemu_lf();
+        state = STATE_FAILED;
     }
 
     if ((ret = mbedtls_rsa_check_privkey(rsa_ctx)) != 0) {
-        state = STATE_FAILED;
 		qemu_puts("mbedtls_rsa_check_privkey ");
 		qemu_putinthex(ret);
 		qemu_lf();
+        state = STATE_FAILED;
     }
 
 	return state;
@@ -362,6 +375,13 @@ static enum state started_commands(enum state state, struct context *ctx,
 		state = STATE_LOADING;
 		break;
 	}
+	case CMD_IS_KEY_LOADED:
+	{
+		rsp[0] = ctx->initialized;
+		appreply(pkt.hdr, RSP_IS_KEY_LOADED, rsp);
+		// state unchanged
+		break;
+	}
 
 	default:
 		qemu_puts("Got unknown initial command: 0x");
@@ -425,7 +445,8 @@ static enum state loading_commands(enum state state, struct context *ctx,
 		// state unchanged
 		break;
 	}
-	case CMD_LOAD_KEY: {
+	case CMD_LOAD_KEY:
+	case CMD_LOAD_ENC_KEY: {
 		int nbytes = 0;			    // Bytes to write to memory
 		qemu_puts("CMD_LOAD_KEY\n");
 
@@ -445,7 +466,7 @@ static enum state loading_commands(enum state state, struct context *ctx,
 		}
 
 		memcpy_s(&ctx->key[ctx->msg_idx],
-			 1676 - ctx->msg_idx, pkt.cmd + 1, nbytes);
+			 RSA_PEM_FILE_SIZE - ctx->msg_idx, pkt.cmd + 1, nbytes);
 
 		ctx->msg_idx += nbytes;
 		ctx->left -= nbytes;
@@ -454,11 +475,11 @@ static enum state loading_commands(enum state state, struct context *ctx,
 		appreply(pkt.hdr, RSP_LOAD_DATA, rsp);
 
 		if (ctx->left == 0) {
-			load_key(ctx);
+			load_key(ctx, pkt.cmd[0] == CMD_LOAD_ENC_KEY);
 			qemu_puts("CMD_LOAD_KEY is done\n");
 			ctx->msg_idx = 0;
 			ctx->message_size = 0;
-			state = STATE_STARTED;
+			state = pkt.cmd[0] == CMD_LOAD_ENC_KEY ? STATE_STARTED : STATE_RSA_KEY_ENCRYPTING;
 			break;
 		}
 
@@ -497,12 +518,12 @@ static enum state signing_commands(enum state state, struct context *ctx,
 
 	switch (pkt.cmd[0]) {
 	case CMD_GET_SIG:
+	{
+
 		qemu_puts("CMD_GET_SIG\n");
 		if (pkt.hdr.len != 1) {
 			// Bad length
 			qemu_puts("Bad length\n");
-			qemu_putinthex(pkt.hdr.len);
-			qemu_lf();
 			state = STATE_FAILED;
 			break;
 		}
@@ -554,10 +575,6 @@ static enum state signing_commands(enum state state, struct context *ctx,
 		}
 
 		mbedtls_md_free(&md_ctx);
-		qemu_puts("message_size: ");
-		qemu_putinthex(ctx->message_size);
-		qemu_lf();
-
 		size_t olen = 0;
 		if ((ret = mbedtls_pk_sign(&ctx->pk, MBEDTLS_MD_SHA512, hash, 64,
 								signature, sizeof(signature), &olen,
@@ -580,6 +597,51 @@ static enum state signing_commands(enum state state, struct context *ctx,
 		state = STATE_STARTED;
 
 		break;
+	 }
+
+	default:
+		qemu_puts("Got unknown signing command: 0x");
+		qemu_puthex(pkt.cmd[0]);
+		qemu_lf();
+
+		state = STATE_FAILED;
+		break;
+	}
+
+	return state;
+}
+
+// encrypting_commands() allows only these commands:
+//
+// - CMD_ENCRYPT_KEY
+//
+// Anything else sent leads to state 'failed'.
+//
+// Arguments: the current state, the context, the incoming command
+// packet, and the secret key.
+//
+// Returns: The new state.
+static enum state encrypting_commands(enum state state, struct context *ctx,
+				   struct packet pkt)
+{
+	switch (pkt.cmd[0]) {
+	 case CMD_ENCRYPT_KEY:
+	 {
+		qemu_puts("CMD_ENCRYPT_KEY!\n");
+		uint8_t  nonce[24] = {0};
+		crypto_chacha20_x(ctx->key,
+                          ctx->key,
+                          RSA_PEM_FILE_SIZE,
+                          ctx->secret_key,
+                          nonce,
+                          0);
+		qemu_puts("Sending encrypted key!\n");
+		qemu_hexdump(ctx->key, RSA_PEM_FILE_SIZE);
+		send_data(&pkt, ctx->key, RSA_PEM_FILE_SIZE, RSP_ENCRYPT_KEY);
+		crypto_wipe(ctx->key, sizeof(ctx->key));
+		state = STATE_STARTED;
+		break;
+	 }
 
 	default:
 		qemu_puts("Got unknown signing command: 0x");
@@ -641,7 +703,7 @@ int main(void)
 	#ifndef MBEDTLS_MEMORY_BUFFER_ALLOC_C
 	assert(1==2);
 	#endif
-	unsigned char memory_buf[20000];
+	unsigned char memory_buf[15000];
 	mbedtls_memory_buffer_alloc_init( memory_buf, sizeof(memory_buf) );
 	struct context ctx = {0};
 	enum state state = STATE_STARTED;
@@ -652,7 +714,8 @@ int main(void)
 	*cpu_mon_last = TK1_RAM_BASE + TK1_RAM_SIZE;
 	*cpu_mon_ctrl = 1;
 
-	int ret = 0;
+	// Generate a public key from CDI
+	crypto_ed25519_key_pair(ctx.secret_key, ctx.pubkey, (uint8_t *)cdi);
 
 	led_set(LED_BLUE);
 
@@ -676,6 +739,9 @@ int main(void)
 
 		case STATE_SIGNING:
 			state = signing_commands(state, &ctx, pkt);
+			break;
+		case STATE_RSA_KEY_ENCRYPTING:
+			state = encrypting_commands(state, &ctx, pkt);
 			break;
 
 		case STATE_FAILED:

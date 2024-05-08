@@ -48,6 +48,15 @@ void appreply(struct frame_header hdr, enum appcmd rspcode, void *buf)
 		len = LEN_128;
 		nbytes = 128;
 		break;
+	case RSP_ENCRYPT_KEY:
+		len = LEN_128;
+		nbytes = 128;
+		break;
+	case RSP_IS_KEY_LOADED:
+		len = LEN_4;
+		nbytes = 4;
+		break; 
+
 
 	default:
 		qemu_puts("appreply(): Unknown response code: ");

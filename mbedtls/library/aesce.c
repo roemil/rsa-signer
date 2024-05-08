@@ -38,7 +38,6 @@
 
 #endif /* defined(__clang__) &&  (__clang_major__ >= 4) */
 
-#include <tkey/lib.h>
 #include "common.h"
 
 #if defined(MBEDTLS_AESCE_C)

@@ -14,7 +14,6 @@
 #include "mbedtls/build_info.h"
 #include "alignment.h"
 
-#include <tkey/assert.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stddef.h>
