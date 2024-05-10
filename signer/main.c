@@ -821,9 +821,6 @@ int main(void)
 		case STATE_SIGNING:
 			state = signing_commands(state, &ctx, pkt);
 			break;
-		case STATE_RSA_KEY_ENCRYPTING:
-			state = encrypting_commands(state, &ctx, pkt);
-			break;
 
 		case STATE_FAILED:
 			// fallthrough
