@@ -95,55 +95,6 @@ static void wipe_context(struct context *ctx)
 	ctx->msg_idx = 0;
 }
 
-int generate_rsa_key_pair(mbedtls_rsa_context* rsa)
-{
-	mbedtls_entropy_context entropy;
-    mbedtls_ctr_drbg_context ctr_drbg;
-	uint32_t ret = 0;
-
-    mbedtls_rsa_init(rsa);
-    mbedtls_ctr_drbg_init(&ctr_drbg);
-	mbedtls_entropy_init(&entropy);
-
-	if ((ret = mbedtls_rsa_set_padding(rsa,
-                                       MBEDTLS_RSA_PKCS_V15,
-                                       MBEDTLS_MD_SHA512)) != 0) {
-		qemu_puts("failed mbedtls_rsa_set_padding: ");
-		qemu_putinthex(ret);
-		qemu_lf();
-        goto exit;
-    }
-
-    if ((ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy,
-									 (uint8_t *)cdi,
-									 32)) != 0)
-	{
-		qemu_puts("failed mbedtls_ctr_drbg_seed: ");
-		qemu_putinthex(ret);
-		qemu_lf();
-        goto exit;
-    }
-
-	led_set(LED_WHITE);
-
-	if ((ret = mbedtls_rsa_gen_key(rsa, mbedtls_ctr_drbg_random, &ctr_drbg, KEY_SIZE,
-                                   EXPONENT)) != 0) {
-		qemu_puts("failed mbedtls_rsa_gen_key: ");
-		qemu_putinthex(ret);
-		qemu_lf();
-        goto exit;
-    }
-	led_set(LED_BLUE);
-
-
-
-exit:
-    mbedtls_ctr_drbg_free(&ctr_drbg);
-    mbedtls_entropy_free(&entropy);
-
-	return ret; // TODO: Exit code
-}
-
 void send_data(struct packet* pkt, const uint8_t* buf, size_t total_size, int rsp_type)
 {
 	int left = total_size;
@@ -179,12 +130,11 @@ int generate_seed(struct context * ctx)
 
 void decrypt_key(struct context * ctx)
 {
-	uint8_t  nonce[24] = {0};
 	crypto_chacha20_x(ctx->key,
 					  ctx->key,
                       RSA_PEM_FILE_SIZE,
                       ctx->secret_key,
-                      nonce,
+                      cdi,
                       0);
 }
 
@@ -624,13 +574,12 @@ static enum state encrypting_commands(enum state state, struct context *ctx,
 	 case CMD_ENCRYPT_KEY:
 	 {
 		qemu_puts("CMD_ENCRYPT_KEY!\n");
-		uint8_t  nonce[24] = {0};
 		unsigned char encrypted_key[RSA_PEM_FILE_SIZE] = {0};
 		crypto_chacha20_x(encrypted_key,
                           ctx->key,
                           RSA_PEM_FILE_SIZE,
                           ctx->secret_key,
-                          nonce,
+                          cdi,
                           0);
 		send_data(&pkt, encrypted_key, RSA_PEM_FILE_SIZE, RSP_ENCRYPT_KEY);
 		crypto_wipe(encrypted_key, sizeof(encrypted_key));
